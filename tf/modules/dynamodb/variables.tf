@@ -1,3 +1,4 @@
+
 variable "aws_account" {
   type        = string
   description = "Numerical ID of AWS Account"
@@ -13,36 +14,24 @@ variable "aws_region" {
   default     = "us-east-1"
 }
 
-variable "deployment_team" {
-  type        = string
-  description = "Numerical ID of AWS Account"
-}
-
-variable "project_tag" {
-  type = string
-}
-
-variable "dream_bucket" {
-  description = "bucket to store dream nlp application data"
-  type = string
-  default = "dream-project"
-}
-
-variable "ddb_file_state_table" {
+variable "dynamo_name" {
   description = "dyanmodb table name"
   type = string
+  default = "dream-nlp-file-state-table"
 }
 
-variable "ddb_file_state_table_hash_key" {
+variable "dynamo_hash_key" {
   description = "dyanmodb table dynamo_hash_key"
   type = string
+  default = "dream-nlp-file-state-table"
 }
 
-variable "ddb_file_state_table_range_key" {
+variable "dynamo_range_key" {
   description = "dyanmodb table dynamo_range_key"
   type = string
+  default = "dream-nlp-file-state-table"
 }
 
-variable "ddb_file_state_table_attribute" {
+variable "dynamo_table_attributes" {
   type = map(string)
 }
