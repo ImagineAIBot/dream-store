@@ -22,6 +22,11 @@ variable "project_tag" {
   type = string
 }
 
+variable "application_name" {
+  type = string
+}
+
+
 variable "dream_bucket" {
   description = "bucket to store dream nlp application data"
   type = string
