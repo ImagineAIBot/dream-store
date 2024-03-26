@@ -25,9 +25,14 @@ resource "aws_lambda_function" "text_process_function" {
 
   environment {
     variables = {
+      aws_region = var.aws_region
+      aws_account = var.aws_account
       bucket = var.dream_bucket
+
     }
   }
-  
+}
 
+output "text_process_function_arn" {
+  value = "${aws_lambda_function.text_process_function.arn}"
 }

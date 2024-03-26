@@ -18,3 +18,7 @@ variable "dream_bucket" {
   type = string
   default = "dream-project"
 }
+
+variable "text_process_function_arn" {
+  type = string
+}

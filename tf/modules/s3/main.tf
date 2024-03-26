@@ -31,6 +31,20 @@ resource "aws_s3_bucket_public_access_block" "dream_application_bucket" {
   restrict_public_buckets = true
 }
 
+
+resource "aws_s3_bucket_notification" "dream_application_bucket_notification" {
+  bucket = aws_s3_bucket.dream_application_bucket.id
+
+  lambda_function {
+    lambda_function_arn = var.text_process_function_arn
+    events              = ["s3:ObjectCreated:*"]
+    # filter_prefix       = "/"
+    # filter_suffix       = ".log"
+  }
+
+  # depends_on = [aws_lambda_permission.dream_application_bucket]
+}
+
 output "dream_application_bucket_arn" {
   value = "${aws_s3_bucket.dream_application_bucket.arn}"
 }
