@@ -16,15 +16,21 @@ logger.info("==============Happy Isles Initilization==============")
 ####
 aws_account = os.environ.get('aws_account', "339713150119")
 aws_region = os.environ.get('aws_region', 'us-east-1')
-bucket_name = os.environ.get('bucket', 'dream-store-bucket')
+source_bucket = os.environ.get('source_bucket', 'dream-store-bucket')
+destination_bucket = os.environ.get('destination_bucket', 'dream-store-bucket')
+user_id = os.environ.get('user_id', 'drem-user-2700')
+raw_prefix = 'raw'
 ####
 
 @dataclass
 class S3Object:
     bucket: str = None
     key: str = None
+    file_name: str = None
     size: int = None
     etag: str = None
+    folder: str = None
+    file_name: str= None
 
 
 class AWSUtilities:
@@ -44,14 +50,22 @@ class AWSUtilities:
         self.dream_nlp_file_state_table = self.dynamodb_resource.Table("dream-nlp-file-state-table")
 
     def store_event(self, event: list):
-        for e in event:
-            o = S3Object(**e)
-            if o.size >0:
-                uuid = self.generate_uuid()
-                self.store_s3_status('drem-user-2700', uuid, o )
-                logger.info(f"Adding S3 record to Dynamodb with UUID {uuid}")
-            else:
-                logger.info(f'File/Data size is 0, so not storing, looks to be a folder {o.key}')
+        try:
+
+            for e in event:
+                o = S3Object(**e)
+                if o.size >0:
+                    uuid = self.generate_uuid()
+                    if self.store_s3_status(user_id, uuid, o ):
+                        processed_key = f'processed/{user_id}/{uuid}/{o.file_name}'
+                        self.transfer_files_s3(o.bucket, o.key, destination_bucket,processed_key)
+                        logger.info(f"Copied File {o.file_name} from {o.bucket}/{o.key} to  {destination_bucket} {processed_key}")
+                        self.store_s3_status(user_id, uuid, o )
+                    # logger.info(f"Adding S3 record to Dynamodb with UUID {uuid}")
+                else:
+                    logger.info(f'File/Data size is 0, so not storing and copying, looks to be a folder {o.key}')
+        except Exception as e:
+            logger.error("Error copying file from source to destination {e}")
 
     def get_files_s3(self, bucket, key) -> list:
         """
@@ -102,7 +116,7 @@ class AWSUtilities:
             bucket = self.s3_resource.Bucket(target_bucket)
             logger.info(f'source {copy_source}, target {target_bucket} {target_key}')
             bucket.copy(copy_source, target_key)
-            self.s3_resource.Object(source_bucket, source_key).delete()
+            # self.s3_resource.Object(source_bucket, source_key).delete()
             
             return True
         except ClientError as e:
@@ -134,11 +148,11 @@ class AWSUtilities:
                 }}
         return async_json_doc
     
-    def fetch_s3_status(self, user_id, session_id):
+    def fetch_s3_status(self, user_id, etag):
         status_item = self.s3_status_table.get_item(
             Key={
-                'user_id': user_id,
-                'session_id': session_id
+                'etag': etag,
+                'user_id': user_id
             }
         )
         logger.info(status_item)
@@ -155,12 +169,16 @@ class AWSUtilities:
                 key = s3_object.get('object')['key']
                 size = s3_object.get('object')['size']
                 etag = s3_object.get('object')['eTag']
-
+                key_split = key.split("/")
+                file_name = key_split[-1]
+                folder = key_split[-2]
                 object = {
                     'bucket':bucket_name,
                     'key':key,
                     'size': size,
-                    'etag': etag
+                    'etag': etag,
+                    'folder': folder,
+                    'file_name': file_name
                 }
                 s3_event_list.append(object)
         return s3_event_list
@@ -168,33 +186,37 @@ class AWSUtilities:
 
     def store_s3_status(self, user_id, uuid, s3_object: S3Object):
 
-        check_event = self.fetch_s3_status(user_id, uuid)
-        logger.info(check_event)
+        check_event = self.fetch_s3_status(s3_object.etag, user_id)
+        print(check_event)
+        #check if there is an existing entry for the s3 data
         if check_event:
-            if s3_object.etag != check_event.get('etag'):
-                item = {
-                    'user_id': user_id,
-                    'uuid': uuid,
-                    'bucket': s3_object.bucket,
-                    'key': s3_object.key,
-                    'etag': s3_object.etag,
-                    'size': s3_object.size,
-                    'status': 'completed'
-                }
-
-                response = self.dream_nlp_file_state_table.put_item(
-                    Item = item
-                )
-
-                logger.info(f"Status of S3 Event stored to dream_nlp_file_state_table status {response}")
-            else:
+            if s3_object.etag == check_event.get('etag'): # check if etag has changed
                 logger.info(f"Got the same file again so not storing, {s3_object}")
+                return False
+        
+        item = {
+                'etag': s3_object.etag,
+                'user_id': user_id,
+                'uuid': uuid,
+                'bucket': s3_object.bucket,
+                'key': s3_object.key,
+                'folder': s3_object.folder,
+                'file_name': s3_object.file_name,
+                'size': s3_object.size,
+                'status': 'completed'
+        }
 
-    def fetch_s3_status(self, user_id, uuid):
+        response = self.dream_nlp_file_state_table.put_item(
+            Item = item
+        )
 
+        logger.info(f"Status of S3 Event stored to dream_nlp_file_state_table status {response}")
+        return True
+
+    def fetch_s3_status(self,etag, user_id):
         response = self.dream_nlp_file_state_table.get_item(
             Key={
-                'uuid': uuid,
+                'etag': etag,
                 'user_id': user_id
             }
         )
@@ -229,7 +251,7 @@ if __name__ == "__main__":
     # save_result = aws_utilities.save_files_s3(file_data, bucket_name, file_key)
     # print("File saved successfully:", save_result)
         
-    event = {'Records': [{'eventVersion': '2.1', 'eventSource': 'aws:s3', 'awsRegion': 'us-east-1', 'eventTime': '2024-03-26T22:12:16.196Z', 'eventName': 'ObjectCreated:Put', 'userIdentity': {'principalId': 'A3BYOZPL9NA0HA'}, 'requestParameters': {'sourceIPAddress': '68.77.251.225'}, 'responseElements': {'x-amz-request-id': '47JTMZX77EW2Z2EG', 'x-amz-id-2': 'eP5hbCOykZDRohEDVKtngwTZpGZJ481GH/sAF+jvaHLSBvZ63y7AGrYfi219qEMrZd9xHAZAl8f1j7W5i6zY3q1Q1kcjwSZRvw58Dwss2bg='}, 's3': {'s3SchemaVersion': '1.0', 'configurationId': 'tf-s3-lambda-20240325151258856000000001', 'bucket': {'name': 'dream-store-bucket', 'ownerIdentity': {'principalId': 'A3BYOZPL9NA0HA'}, 'arn': 'arn:aws:s3:::dream-store-bucket'}, 'object': {'key': 'raw/EHR_Sreeji.pdf', 'size': 21609, 'eTag': '49c5d35f32b328985e1d083f18375c71', 'versionId': 'Mfv5ZUimg81x67KGkR62fX4_8vIydBfF', 'sequencer': '0066034840268EC0CA'}}}]}
+    event = {'Records': [{'eventVersion': '2.1', 'eventSource': 'aws:s3', 'awsRegion': 'us-east-1', 'eventTime': '2024-03-29T14:02:01.341Z', 'eventName': 'ObjectCreated:CompleteMultipartUpload', 'userIdentity': {'principalId': 'A3BYOZPL9NA0HA'}, 'requestParameters': {'sourceIPAddress': '68.77.251.225'}, 'responseElements': {'x-amz-request-id': '8NVVVS5HB664AHZ5', 'x-amz-id-2': 'erRspy73WLNsC9Vsh7HdC1+RN+1GTygIsLGmu1+6wjnTnRvp/E1cgAhIWpnCCD3efWwZyuI3i75SsyrPNRjG7lk/zYm1yzZ8'}, 's3': {'s3SchemaVersion': '1.0', 'configurationId': 'tf-s3-lambda-20240325151258856000000001', 'bucket': {'name': 'dream-store-bucket', 'ownerIdentity': {'principalId': 'A3BYOZPL9NA0HA'}, 'arn': 'arn:aws:s3:::dream-store-bucket'}, 'object': {'key': 'raw/00_afh_full.pdf', 'size': 276335101, 'eTag': 'b2e6a1e0cdd4813ad8e66bb49172d291-17', 'versionId': 'DHKcbBockbLDY52r5eXCFtbsg.tqJR2r', 'sequencer': '006606C9C1436A3AFD'}}}]}
 
     s3_event_dict = aws_utilities.parse_event(event)
     aws_utilities.store_event(s3_event_dict)

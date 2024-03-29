@@ -7,9 +7,9 @@ aws_account = "339713150119"
 dream_bucket = "dream-store-bucket"
 application_name = "dream-nlp"
 ddb_file_state_table = "dream-nlp-file-state-table"
-ddb_file_state_table_hash_key = "uuid"
+ddb_file_state_table_hash_key = "etag"
 ddb_file_state_table_range_key = "user_id"
 ddb_file_state_table_attribute = {
-    "uuid" = "S",
+    "etag" = "S",
     "user_id" = "S"
 }

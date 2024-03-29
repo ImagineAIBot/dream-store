@@ -14,7 +14,7 @@ resource "aws_lambda_function" "text_process_function" {
   function_name = "${var.application_name}-text-process-function"
   role          = "${aws_iam_role.lambda_role.arn}"
   handler       = "app.lambda_handler"
-
+  timeout       = 60
 
   # The filebase64sha256() function is available in Terraform 0.11.12 and later
   # For Terraform 0.11.11 and earlier, use the base64sha256() function and the file() function:
@@ -27,8 +27,8 @@ resource "aws_lambda_function" "text_process_function" {
     variables = {
       aws_region = var.aws_region
       aws_account = var.aws_account
-      bucket = var.dream_bucket
-
+      source_bucket = var.dream_bucket
+      destination_bucket = var.dream_bucket
     }
   }
 }
