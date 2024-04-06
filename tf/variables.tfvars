@@ -13,3 +13,12 @@ ddb_file_state_table_attribute = {
     "etag" = "S",
     "user_id" = "S"
 }
+
+
+ddb_textract_state_table = "dream-nlp-textract-state-table"
+ddb_textract_state_table_hash_key = "uuid"
+ddb_textract_state_table_range_key = "user_id"
+ddb_textract_state_table_attribute = {
+    "uuid" = "S",
+    "user_id" = "S"
+}

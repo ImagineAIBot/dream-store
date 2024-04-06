@@ -29,6 +29,8 @@ resource "aws_lambda_function" "text_process_function" {
       aws_account = var.aws_account
       source_bucket = var.dream_bucket
       destination_bucket = var.dream_bucket
+      sns_role_arn = "${aws_iam_role.textract_role.arn}"
+      sns_arn = aws_sns_topic.textract_sns_response.arn
     }
   }
 }

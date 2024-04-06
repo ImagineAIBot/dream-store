@@ -51,3 +51,23 @@ variable "ddb_file_state_table_range_key" {
 variable "ddb_file_state_table_attribute" {
   type = map(string)
 }
+
+#-----
+variable "ddb_textract_state_table" {
+  description = "dyanmodb table name"
+  type = string
+}
+
+variable "ddb_textract_state_table_hash_key" {
+  description = "dyanmodb table dynamo_hash_key"
+  type = string
+}
+
+variable "ddb_textract_state_table_range_key" {
+  description = "dyanmodb table dynamo_range_key"
+  type = string
+}
+
+variable "ddb_textract_state_table_attribute" {
+  type = map(string)
+}
