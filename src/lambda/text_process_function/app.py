@@ -6,6 +6,7 @@ import json
 from types import SimpleNamespace
 from dataclasses import dataclass
 import os
+import trp
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] [%(name)s] %(message)s')
 logger = logging.getLogger()
@@ -103,6 +104,49 @@ class AWSUtilities:
             logger.info(f'Got Event with source {eventsource}')
             return eventsource
         
+    def loadTextractOutput(self, bucket, key):
+        file_list = self.getFilesS3(bucket, key)
+        logger.info(f'File List {file_list} for key {key}')
+        if len(file_list) > 0 :
+            logger.info('loadTextractOutput: Textract Output File Found, returning to processing ')
+            for file in file_list:
+                textract_json = self.readFilesS3(bucket, key)
+                textract_json = json.loads(textract_json)
+                # logger.info(textract_json)
+                return textract_json
+        return None
+
+    def getTextractDocument(self, textextract_object):
+        try:
+            job_id = textextract_object.job_id
+            textract_bucket = textextract_object.destination_bucket
+            textract_key = f'{textextract_object.destination_key}{textextract_object.job_id}/{textextract_object.uuid}.json'
+            textract_json = self.loadTextractOutput(textract_bucket,textract_key)
+
+            if textract_json == None:
+                logger.info('getTextractDocument: Textract Output Not Found Accessing via the API')
+                # Get Textract Document from API only if the JSONN is not stored
+                response = self.textract_client.get_document_analysis(JobId=job_id)
+                nextToken = None
+
+                if('NextToken' in response):
+                    nextToken = response['NextToken']
+                while(nextToken):
+                    next_response = self.textract_client.get_document_analysis(JobId=job_id, NextToken=nextToken)
+                    response['Blocks'].extend(next_response['Blocks'])
+                    nextToken = None
+                    if('NextToken' in next_response):
+                        nextToken = next_response['NextToken']
+                logger.info('getTextractDocument: Textract Response JSON Storting to S3')
+                self.saveFilesS3(json.dumps(response), textract_bucket, textract_key)
+                return response
+            else:
+                return textract_json
+  
+        except Exception as e:
+            logger.error(f"Error getTextractDocument {e}")
+            return None
+        
     def processTextractEvent(self, event: list):
         try:
             for e in event:
@@ -110,6 +154,18 @@ class AWSUtilities:
                 logger.info(f'Got Event with source {o}')
                 textract_event = self.fetchTextractStatus(o.job_tag, o.user_id)
                 logger.info(f'Textract data from DB {textract_event}')
+
+                ##calling load textract outpout as json
+                textextract_object = TextractObject(**textract_event)
+                logger.info(f'processTextractEvent: Textract data from object {textextract_object}')
+    
+
+                textract_json = self.getTextractDocument(textextract_object)
+                doc = trp.Document(textract_json)
+        
+                for page in doc.pages:
+                    print(page)
+
         except Exception as e:
             logger.error(f"Error processTextractEvent {e}")
 
@@ -292,7 +348,7 @@ class AWSUtilities:
                 'source_key': textract_object.source_key,
                 'destination_bucket': textract_object.destination_bucket,
                 'destination_key': textract_object.destination_key,
-                'status': textract_object.job_status
+                'job_status': textract_object.job_status
         }
 
         response = self.dream_nlp_textract_state_table.put_item(
@@ -336,7 +392,7 @@ class AWSUtilities:
                 'size': s3_object.size,
                 'destination_bucket': s3_object.destination_bucket,
                 'destination_key': s3_object.destination_key,
-                'status': 'COMPLETED'
+                'job_status': 'COMPLETED'
         }
 
         response = self.dream_nlp_file_state_table.put_item(
