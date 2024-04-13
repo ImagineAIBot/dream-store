@@ -1,3 +1,5 @@
+**/src/lambda/text_process_function.zip
+*.zip
 .DS_Store
 .terraform/*
 # Local .terraform directories

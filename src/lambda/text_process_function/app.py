@@ -28,6 +28,7 @@ raw_prefix = 'raw'
 #static variables
 s3_eventSource = 'aws:s3'   #for event comming from s3 raw key
 sns_eventSource = 'aws:sns' #for event comming sns for textract result
+end_of_page = False
 ####
 
 @dataclass
@@ -55,6 +56,8 @@ class TextractObject:
     destination_bucket: str =None
     destination_key: str = None
     user_id:str = None
+    json_key:str = None
+    text_key:str = None
 
 class AWSUtilities:
     def __init__(self, aws_region):
@@ -80,6 +83,7 @@ class AWSUtilities:
         self.sns_arn = sns_arn
         self.sns_role_arn = sns_role_arn
         self.uuid = None
+        self.end_of_page = end_of_page
 
         self.dream_nlp_file_state_table = self.dynamodb_resource.Table("dream-nlp-file-state-table")
         self.dream_nlp_textract_state_table = self.dynamodb_resource.Table("dream-nlp-textract-state-table")
@@ -116,30 +120,43 @@ class AWSUtilities:
                 return textract_json
         return None
 
-    def getTextractDocument(self, textextract_object):
+    def getTextractDocument(self, textract_object):
         try:
-            job_id = textextract_object.job_id
-            textract_bucket = textextract_object.destination_bucket
-            textract_key = f'{textextract_object.destination_key}{textextract_object.job_id}/{textextract_object.uuid}.json'
+            job_id = textract_object.job_id
+            (application, user_id, uuid) = self.getUUID(textract_object.uuid)
+            textract_bucket = textract_object.destination_bucket
+            textract_key = f'{textract_object.destination_key}{textract_object.job_id}/json/{uuid}.json'
             textract_json = self.loadTextractOutput(textract_bucket,textract_key)
 
             if textract_json == None:
                 logger.info('getTextractDocument: Textract Output Not Found Accessing via the API')
                 # Get Textract Document from API only if the JSONN is not stored
                 response = self.textract_client.get_document_analysis(JobId=job_id)
+                print(response)
                 nextToken = None
-
+                nI = 1
                 if('NextToken' in response):
                     nextToken = response['NextToken']
                 while(nextToken):
+                    nI+=1
                     next_response = self.textract_client.get_document_analysis(JobId=job_id, NextToken=nextToken)
                     response['Blocks'].extend(next_response['Blocks'])
                     nextToken = None
+                    print(f'Pages Next {nI}')
                     if('NextToken' in next_response):
                         nextToken = next_response['NextToken']
-                logger.info('getTextractDocument: Textract Response JSON Storting to S3')
-                self.saveFilesS3(json.dumps(response), textract_bucket, textract_key)
-                return response
+
+                if response != '':
+                    logger.info('getTextractDocument: Textract Response JSON Storting to S3')
+                    self.saveFilesS3(json.dumps(response), textract_bucket, textract_key)
+                    textract_object.json_key = textract_json
+                    self.storeTextractStatus(user_id, textract_object)
+                    return response
+                else:
+                    logger.info('getTextractDocument: Textract Response Extraction Failed ')
+                    textract_object.job_status = 'getTextractDocument, FAILED'
+                    self.storeTextractStatus(user_id, textract_object)
+                    return None
             else:
                 return textract_json
   
@@ -150,24 +167,47 @@ class AWSUtilities:
     def processTextractEvent(self, event: list):
         try:
             for e in event:
+                doc = None
                 o = TextractObject(**e)
                 logger.info(f'Got Event with source {o}')
                 textract_event = self.fetchTextractStatus(o.job_tag, o.user_id)
                 logger.info(f'Textract data from DB {textract_event}')
 
                 ##calling load textract outpout as json
-                textextract_object = TextractObject(**textract_event)
-                logger.info(f'processTextractEvent: Textract data from object {textextract_object}')
+                textract_object = TextractObject(**textract_event)
+                logger.info(f'processTextractEvent: Textract data from object {textract_object}')
     
-
-                textract_json = self.getTextractDocument(textextract_object)
-                doc = trp.Document(textract_json)
-        
-                for page in doc.pages:
-                    print(page)
-
+                txt = ''
+                textract_json = self.getTextractDocument(textract_object)
+                if textract_json:
+                    logger.info('Inside trp')
+                    try:
+                        doc = trp.Document(textract_json)
+                        txt = ''
+                        for page in doc.pages:
+                            if self.end_of_page and txt:
+                                txt += '$$$ENDOFPAGE$$$'
+                            for line in page.lines:
+                                txt += line.text + '\n'
+                        logger.info('Done with trp')
+                    except Exception as e:
+                        logger.error(f"Error processTextractEvent trp process failed with {e}")
+                        return
+                    
+                    logger.info('Text extracted from document')
+                    # logger.info(f'{txt}')
+                    (application, user_id, uuid) = self.getUUID(textract_object.uuid)
+                    textract_bucket = textract_object.destination_bucket
+                    textract_text_key = f'{textract_object.destination_key}{textract_object.job_id}/text/{uuid}.txt'
+                    self.saveFilesS3(txt, textract_bucket, textract_text_key)
+                    textract_object.text_key = textract_text_key
+                    self.storeTextractStatus(user_id, textract_object)
+                else:
+                    logger.info('processTextractEvent: Textract Response Extraction Failed')
+                    return
         except Exception as e:
-            logger.error(f"Error processTextractEvent {e}")
+            logger.error(f"Error processTextractEvent Main {e}")
+            return
 
     def storeS3Event(self, event: list):
         try:
@@ -335,7 +375,7 @@ class AWSUtilities:
             
     def storeTextractStatus(self, user_id, textract_object: TextractObject):
 
-        check_event = self.fetchTextractStatus(textract_object.uuid, user_id)
+        # check_event = self.fetchTextractStatus(textract_object.uuid, user_id)
         #check if there is an existing entry for the s3 data
 
         item = {
@@ -348,7 +388,9 @@ class AWSUtilities:
                 'source_key': textract_object.source_key,
                 'destination_bucket': textract_object.destination_bucket,
                 'destination_key': textract_object.destination_key,
-                'job_status': textract_object.job_status
+                'job_status': textract_object.job_status,
+                'json_key': textract_object.json_key,
+                'text_key': textract_object.text_key
         }
 
         response = self.dream_nlp_textract_state_table.put_item(
@@ -475,8 +517,8 @@ if __name__ == "__main__":
     # print("File saved successfully:", save_result)
         
     event_s3 = {'Records': [{'eventVersion': '2.1', 'eventSource': 'aws:s3', 'awsRegion': 'us-east-1', 'eventTime': '2024-04-06T01:45:56.726Z', 'eventName': 'ObjectCreated:Put', 'userIdentity': {'principalId': 'AWS:AIDAU6GD3JSTYXPMXYJH5'}, 'requestParameters': {'sourceIPAddress': '68.77.251.225'}, 'responseElements': {'x-amz-request-id': 'WKT238N8JT78453V', 'x-amz-id-2': 'cdPCMWGIGCeqpMmLm5eAdqIwp59KFCDgDpTKbrfs4R8y13pv88cZRXaqdtzuKG8ZRHJ3Ahk91i6NXA3lAWzt2qXxPTh/70HM'}, 's3': {'s3SchemaVersion': '1.0', 'configurationId': 'tf-s3-lambda-20240325151258856000000001', 'bucket': {'name': 'dream-store-bucket', 'ownerIdentity': {'principalId': 'A3BYOZPL9NA0HA'}, 'arn': 'arn:aws:s3:::dream-store-bucket'}, 'object': {'key': 'raw/admin/EHR_Sreeji.pdf', 'size': 21609, 'eTag': '49c5d35f32b328985e1d083f18375c71', 'versionId': 'n7xZaVmik6C0w0WDJHPMtQE23Zu6GSZx', 'sequencer': '006610A9548E864EC1'}}}]}
-    event_textract = {'Records': [{'EventSource': 'aws:sns', 'EventVersion': '1.0', 'EventSubscriptionArn': 'arn:aws:sns:us-east-1:339713150119:dream-nlp-textract-sns-response:d6be26f5-dd12-41e5-8759-db0063c31af0', 'Sns': {'Type': 'Notification', 'MessageId': '71b0b25b-8c34-5563-a54c-ecd66f8938c4', 'TopicArn': 'arn:aws:sns:us-east-1:339713150119:dream-nlp-textract-sns-response', 'Subject': None, 'Message': '{"JobId":"9a2ebd8b245477e5c56421f3867fbc1f5c60ad27d584097fc3165a9a1611d32c","Status":"SUCCEEDED","API":"StartDocumentAnalysis","JobTag":"dream:drem-user-2700:c974241ac25a4a54835c16b4e3508ff7","Timestamp":1712578941104,"DocumentLocation":{"S3ObjectName":"processed/drem-user-2700/c974241ac25a4a54835c16b4e3508ff7/EHR_Sreeji.pdf","S3Bucket":"dream-store-bucket"}}', 'Timestamp': '2024-04-08T12:22:21.151Z', 'SignatureVersion': '1', 'Signature': 'EVvSFIOpeuZ+t2iDmPjhQxgR0q9wSveWRWplLPLsoHV7vKVg/qWKZhcxu3b1XN2NycciVcAT/7Ip8gXN5qKGslJL8cou6aORqgoql+Fgc92shufdXzbRPg6dtoi5/qz5dzaO+YWTLGlCfRIxuXLb3e1dGZ73G6IZlZP2xWoEd5wRpo3px+3yhD5oPoYSvxxHWXePxk2yRg6DayQr/KUObzRbEwyglVXNeLlN5FwVeSJBsJ07qtGPOr2lCqe2RM+HSqgbh/RZXfEZNTv9BmAhRGM4O3bWVdp/+tPv/hv+LSb5DHDY5bHcd8CbdbEZdnDLI+7haVlW9+NrFVNCCW1NoA==', 'SigningCertUrl': 'https://sns.us-east-1.amazonaws.com/SimpleNotificationService-60eadc530605d63b8e62a523676ef735.pem', 'UnsubscribeUrl': 'https://sns.us-east-1.amazonaws.com/?Action=Unsubscribe&SubscriptionArn=arn:aws:sns:us-east-1:339713150119:dream-nlp-textract-sns-response:d6be26f5-dd12-41e5-8759-db0063c31af0', 'MessageAttributes': {}}}]}
-    source = aws_utilities.eventSource(event_textract)
+    event_textract = {'Records': [{'EventSource': 'aws:sns', 'EventVersion': '1.0', 'EventSubscriptionArn': 'arn:aws:sns:us-east-1:339713150119:dream-nlp-textract-sns-response:d6be26f5-dd12-41e5-8759-db0063c31af0', 'Sns': {'Type': 'Notification', 'MessageId': '9ef73f8d-6b2a-5347-a6e0-611e0e22a5f2', 'TopicArn': 'arn:aws:sns:us-east-1:339713150119:dream-nlp-textract-sns-response', 'Subject': None, 'Message': '{"JobId":"b125ced9d2b13f325ee6478c0c4cb5ee4f8e351a6fb88020ad60cb7247307660","Status":"SUCCEEDED","API":"StartDocumentAnalysis","JobTag":"dream:drem-user-2700:cab685a9b31e493caa6dddd9db2ea01c","Timestamp":1712939720622,"DocumentLocation":{"S3ObjectName":"processed/drem-user-2700/cab685a9b31e493caa6dddd9db2ea01c/EHR_Sreeji.pdf","S3Bucket":"dream-store-bucket"}}', 'Timestamp': '2024-04-12T16:35:20.681Z', 'SignatureVersion': '1', 'Signature': 'gj12ZMVJ86MH05gimMzoZksiigg3E0i1PYD8mdEbb+JNLUpUDWDilfdhK3u8yd9OSsQ4oe7aEZ69LeUrkGdR0BDfmMTlZhgj/YDQk4kjdFwZIz5KvbFS8tTd8h9BBwRJnn/V795x7MA2mkjXcjNbZszsm/tjX1hNDjCqdosuZBTmAzSE27Vpi09lfGscp0tvXu8VibAw/TQ/fAWPG2uAa+jmLwvXcOU55fFrjYnvNYyEYCX/rlQRn6xfWGyKBX3Z1A8qP+OXZ4iu61vHcNh8Xy7QFsxL1Cm4lQt5K8YJlkAlECBOtpwcnge97z8f/wq65Lo207e40c72MOPqml91cw==', 'SigningCertUrl': 'https://sns.us-east-1.amazonaws.com/SimpleNotificationService-60eadc530605d63b8e62a523676ef735.pem', 'UnsubscribeUrl': 'https://sns.us-east-1.amazonaws.com/?Action=Unsubscribe&SubscriptionArn=arn:aws:sns:us-east-1:339713150119:dream-nlp-textract-sns-response:d6be26f5-dd12-41e5-8759-db0063c31af0', 'MessageAttributes': {}}}]}
+    source = aws_utilities.eventSource(event_s3)
     
     if source == s3_eventSource:
         event_dict = aws_utilities.parseEvent(event_s3)
@@ -491,5 +533,12 @@ if __name__ == "__main__":
 def lambda_handler(event, content):
     print(event)
     aws_utilities = AWSUtilities(aws_region)
-    s3_event_dict = aws_utilities.parseEvent(event)
-    aws_utilities.storeEvent(s3_event_dict)
+
+    source = aws_utilities.eventSource(event)
+    
+    if source == s3_eventSource:
+        event_dict = aws_utilities.parseEvent(event)
+        aws_utilities.storeS3Event(event_dict)
+    else:
+        event_dict = aws_utilities.parseEvent(event)
+        aws_utilities.processTextractEvent(event_dict)

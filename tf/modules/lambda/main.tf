@@ -1,10 +1,14 @@
+resource "aws_lambda_layer_version" "lambda_layer" {
+  filename   = "${path.root}/../src/lambda/layer/layers/dream-layer.zip"
+  layer_name = "dream_layer"
 
+  compatible_runtimes = ["python3.10"]
+}
 data "archive_file" "text_process_function" {
     type = "zip"
     source_dir = "${path.root}/../src/lambda/text_process_function"
     output_path = "${path.root}/../src/lambda/text_process_function.zip"
 }
-
 
 
 resource "aws_lambda_function" "text_process_function" {
@@ -14,6 +18,7 @@ resource "aws_lambda_function" "text_process_function" {
   function_name = "${var.application_name}-text-process-function"
   role          = "${aws_iam_role.lambda_role.arn}"
   handler       = "app.lambda_handler"
+  layers        = [aws_lambda_layer_version.lambda_layer.arn]
   timeout       = 60
 
   # The filebase64sha256() function is available in Terraform 0.11.12 and later
@@ -21,7 +26,7 @@ resource "aws_lambda_function" "text_process_function" {
   # source_code_hash = "${base64sha256(file("lambda_function_payload.zip"))}"
   source_code_hash = filebase64sha256("${data.archive_file.text_process_function.output_path}")
 
-  runtime = "python3.8"
+  runtime = "python3.10"
 
   environment {
     variables = {
