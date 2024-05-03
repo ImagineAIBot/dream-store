@@ -7,6 +7,9 @@ from types import SimpleNamespace
 from dataclasses import dataclass
 import os
 import trp
+from datetime import datetime as dt
+import math
+import time
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] [%(name)s] %(message)s')
 logger = logging.getLogger()
@@ -43,6 +46,8 @@ class S3Object:
     destination_bucket: str =None
     destination_key: str = None
     uuid: str = None
+    date: str = None
+    timestamp: str = None
 
 @dataclass
 class TextractObject:
@@ -58,6 +63,8 @@ class TextractObject:
     user_id:str = None
     json_key:str = None
     text_key:str = None
+    date: str = None
+    timestamp: str = None
 
 class AWSUtilities:
     def __init__(self, aws_region):
@@ -87,7 +94,21 @@ class AWSUtilities:
 
         self.dream_nlp_file_state_table = self.dynamodb_resource.Table("dream-nlp-file-state-table")
         self.dream_nlp_textract_state_table = self.dynamodb_resource.Table("dream-nlp-textract-state-table")
+        self.DATE = self.getToDate()
+        self.TIMESTAMP = self.getTimestamp()
 
+    def getDateTime(self):
+        return dt.now()
+    
+    def getTimestamp(self):
+        return math.trunc(time.mktime(self.getDateTime().timetuple()))
+    
+    def getToDate(self):
+        return self.getDateTime().strftime("%Y%m%d")
+    
+    def getToDateTime(self):
+        return self.getDateTime().strftime("%Y%m%d %H:%M:%S")
+    
     def buildUUID(self, user_id):
         # UUID will be the common field to be mapped between all the services, it should a string 
         # in combinaation of application name, user id, and uuid (generated)
@@ -208,6 +229,38 @@ class AWSUtilities:
         except Exception as e:
             logger.error(f"Error processTextractEvent Main {e}")
             return
+    
+    def processComprehendMedicaEventl(self, txt, comprehend_object):
+        logger.info("Comprehend Medical Detect Entities, Started")
+        (application, user_id, uuid) = self.getUUID(comprehend_object.uuid)
+        comprehend_bucket = comprehend_object.destination_bucket
+        comprehend_key = f'{comprehend_object.destination_key}{comprehend_object.job_id}/comprehend/{uuid}.txt'
+        comprehend_response = self.loadComprehendMedicalOutput()
+        if comprehend_response:
+            comprehend_response = self.comprehend_medical_client.detect_entities_v2(Text=txt)
+
+            if 'Entities' in comprehend_response:
+                
+                comprehend_json = json.dumps(comprehend_response)
+                logger.info('Comprehend Medical Detect Entities, Completed')
+                self.saveFilesS3(comprehend_json, comprehend_bucket, comprehend_key)
+            else:
+                logger.info("Comprehend Medical Detect Entities, Failed")
+        else:
+            logger.info("Comprehend Medical Detect Entities Already Process and saved")
+            return comprehend_response
+
+    def loadComprehendMedicalOutput(self, bucket, key):
+        file_list = self.getFilesS3(bucket, key)
+        logger.info(f'File List {file_list} for key {key}')
+        if len(file_list) > 0 :
+            logger.info('loadComprehendMedicalOutput: Comprehend Medical Output File Found, returning to processing ')
+            for file in file_list:
+                comprehend_json = self.readFilesS3(bucket, key)
+                comprehend_json = json.loads(comprehend_json)
+                # logger.info(textract_json)
+                return comprehend_json
+        return None
 
     def storeS3Event(self, event: list):
         try:
@@ -340,9 +393,8 @@ class AWSUtilities:
                     file_name = key_split[-1]
                     folder = key_split[-2]
                     uuid = uuid
-                    destination_key = f'processed/{self.user_id}/{uuid_only}/{file_name}'
                     destination_bucket = self.destination_bucket
-                    destination_key = destination_key
+                    destination_key = f'processed/{self.user_id}/{self.DATE}/{uuid_only}/{file_name}'
                     object = {
                         'bucket':bucket_name,
                         'key':key,
@@ -352,7 +404,9 @@ class AWSUtilities:
                         'file_name': file_name,
                         'destination_bucket': destination_bucket,
                         'destination_key': destination_key,
-                        'uuid': uuid
+                        'uuid': uuid,
+                        'date': self.DATE,
+                        'timestamp': self.TIMESTAMP
                     }
                     event_list.append(object)
                 return event_list
@@ -368,7 +422,9 @@ class AWSUtilities:
                         'job_id': sns_message['JobId'],
                         'job_status': sns_message['Status'],
                         'job_tag': sns_message['JobTag'],
-                        'job_timestamp': sns_message['Timestamp']
+                        'job_timestamp': sns_message['Timestamp'],
+                        'date': self.DATE,
+                        'timestamp': self.TIMESTAMP
                     }
                     event_list.append(object)
                 return event_list
@@ -381,6 +437,8 @@ class AWSUtilities:
         item = {
                 'uuid': textract_object.uuid,
                 'user_id': user_id,
+                'date': textract_object.date,
+                'timestamp': textract_object.timestamp,
                 'job_id': textract_object.job_id,
                 'job_tag': textract_object.job_tag,
                 'job_timestamp': textract_object.job_timestamp,
@@ -417,7 +475,7 @@ class AWSUtilities:
     def storeS3Status(self, user_id, s3_object: S3Object):
 
         check_event = self.fetchS3Status(s3_object)
-        #check if there is an existing entry for the s3 data
+        #check if there is an existing entry for the s3 data using S3 objects ETAG
         if check_event:
             if s3_object.etag == check_event.get('etag'): # check if etag has changed
                 logger.info(f"Got the same file again so not storing, {s3_object}")
@@ -427,6 +485,8 @@ class AWSUtilities:
                 'etag': s3_object.etag,
                 'user_id': user_id,
                 'uuid': s3_object.uuid,
+                'date': s3_object.date,
+                'timestamp': s3_object.timestamp,
                 'bucket': s3_object.bucket,
                 'key': s3_object.key,
                 'folder': s3_object.folder,
@@ -435,6 +495,7 @@ class AWSUtilities:
                 'destination_bucket': s3_object.destination_bucket,
                 'destination_key': s3_object.destination_key,
                 'job_status': 'COMPLETED'
+
         }
 
         response = self.dream_nlp_file_state_table.put_item(
@@ -460,7 +521,7 @@ class AWSUtilities:
     def initiateTextractProcess(self, s3_object: S3Object):
         try:
             (application, user_id, uuid) = self.getUUID(s3_object.uuid)
-            textract_key = f'textract/{user_id}/{uuid}/'
+            textract_key = f'textract/{user_id}/{self.DATE}/{uuid}/'
             client_token = f'{application}-{uuid}'
             textract_json = self.buildJsonDocument(client_token, s3_object.uuid, s3_object.destination_bucket, s3_object.destination_key,s3_object.destination_bucket, 
                                                      textract_key, self.sns_arn, self.sns_role_arn)
@@ -486,6 +547,8 @@ class AWSUtilities:
             textract_object.destination_bucket = textract_json['OutputConfig']['S3Bucket']
             textract_object.destination_key = textract_json['OutputConfig']['S3Prefix']
             textract_object.job_id = response['JobId']  # this holds the job id from the start_document_analysis API
+            textract_object.date = self.DATE
+            textract_object.timestamp = self.TIMESTAMP
             self.storeTextractStatus(user_id,textract_object)
             logger.info(f"Textract Start Document Analysis Initiated Success and Stored {textract_object.uuid} ")
             return True
@@ -517,7 +580,7 @@ if __name__ == "__main__":
     # print("File saved successfully:", save_result)
         
     event_s3 = {'Records': [{'eventVersion': '2.1', 'eventSource': 'aws:s3', 'awsRegion': 'us-east-1', 'eventTime': '2024-04-06T01:45:56.726Z', 'eventName': 'ObjectCreated:Put', 'userIdentity': {'principalId': 'AWS:AIDAU6GD3JSTYXPMXYJH5'}, 'requestParameters': {'sourceIPAddress': '68.77.251.225'}, 'responseElements': {'x-amz-request-id': 'WKT238N8JT78453V', 'x-amz-id-2': 'cdPCMWGIGCeqpMmLm5eAdqIwp59KFCDgDpTKbrfs4R8y13pv88cZRXaqdtzuKG8ZRHJ3Ahk91i6NXA3lAWzt2qXxPTh/70HM'}, 's3': {'s3SchemaVersion': '1.0', 'configurationId': 'tf-s3-lambda-20240325151258856000000001', 'bucket': {'name': 'dream-store-bucket', 'ownerIdentity': {'principalId': 'A3BYOZPL9NA0HA'}, 'arn': 'arn:aws:s3:::dream-store-bucket'}, 'object': {'key': 'raw/admin/EHR_Sreeji.pdf', 'size': 21609, 'eTag': '49c5d35f32b328985e1d083f18375c71', 'versionId': 'n7xZaVmik6C0w0WDJHPMtQE23Zu6GSZx', 'sequencer': '006610A9548E864EC1'}}}]}
-    event_textract = {'Records': [{'EventSource': 'aws:sns', 'EventVersion': '1.0', 'EventSubscriptionArn': 'arn:aws:sns:us-east-1:339713150119:dream-nlp-textract-sns-response:d6be26f5-dd12-41e5-8759-db0063c31af0', 'Sns': {'Type': 'Notification', 'MessageId': '9ef73f8d-6b2a-5347-a6e0-611e0e22a5f2', 'TopicArn': 'arn:aws:sns:us-east-1:339713150119:dream-nlp-textract-sns-response', 'Subject': None, 'Message': '{"JobId":"b125ced9d2b13f325ee6478c0c4cb5ee4f8e351a6fb88020ad60cb7247307660","Status":"SUCCEEDED","API":"StartDocumentAnalysis","JobTag":"dream:drem-user-2700:cab685a9b31e493caa6dddd9db2ea01c","Timestamp":1712939720622,"DocumentLocation":{"S3ObjectName":"processed/drem-user-2700/cab685a9b31e493caa6dddd9db2ea01c/EHR_Sreeji.pdf","S3Bucket":"dream-store-bucket"}}', 'Timestamp': '2024-04-12T16:35:20.681Z', 'SignatureVersion': '1', 'Signature': 'gj12ZMVJ86MH05gimMzoZksiigg3E0i1PYD8mdEbb+JNLUpUDWDilfdhK3u8yd9OSsQ4oe7aEZ69LeUrkGdR0BDfmMTlZhgj/YDQk4kjdFwZIz5KvbFS8tTd8h9BBwRJnn/V795x7MA2mkjXcjNbZszsm/tjX1hNDjCqdosuZBTmAzSE27Vpi09lfGscp0tvXu8VibAw/TQ/fAWPG2uAa+jmLwvXcOU55fFrjYnvNYyEYCX/rlQRn6xfWGyKBX3Z1A8qP+OXZ4iu61vHcNh8Xy7QFsxL1Cm4lQt5K8YJlkAlECBOtpwcnge97z8f/wq65Lo207e40c72MOPqml91cw==', 'SigningCertUrl': 'https://sns.us-east-1.amazonaws.com/SimpleNotificationService-60eadc530605d63b8e62a523676ef735.pem', 'UnsubscribeUrl': 'https://sns.us-east-1.amazonaws.com/?Action=Unsubscribe&SubscriptionArn=arn:aws:sns:us-east-1:339713150119:dream-nlp-textract-sns-response:d6be26f5-dd12-41e5-8759-db0063c31af0', 'MessageAttributes': {}}}]}
+    event_textract = {'Records': [{'EventSource': 'aws:sns', 'EventVersion': '1.0', 'EventSubscriptionArn': 'arn:aws:sns:us-east-1:339713150119:dream-nlp-textract-sns-response:d6be26f5-dd12-41e5-8759-db0063c31af0', 'Sns': {'Type': 'Notification', 'MessageId': 'aaf5300d-e83d-5d10-be3d-6ea2d6cb50d3', 'TopicArn': 'arn:aws:sns:us-east-1:339713150119:dream-nlp-textract-sns-response', 'Subject': None, 'Message': '{"JobId":"bf341c4ce515d34ee281ed758d130380b208467cd2626d1e66555a6b1c6552e3","Status":"SUCCEEDED","API":"StartDocumentAnalysis","JobTag":"dream:drem-user-2700:21071f366c894ad4baf343cde263a702","Timestamp":1714764982552,"DocumentLocation":{"S3ObjectName":"processed/drem-user-2700/20240503/21071f366c894ad4baf343cde263a702/EHR_Sreeji.pdf","S3Bucket":"dream-store-bucket"}}', 'Timestamp': '2024-05-03T19:36:22.601Z', 'SignatureVersion': '1', 'Signature': 'cVsbqGsxi07TkfdV0s5i7SB4pkLWIj1FF2hcZL84sahWSjL4lVs45SQGm4cte0psHOG5dNLSNTQ6r8xmUMdiuuMq4jwSgZ6/iO9Tx07Flq7PU38SWyrPZR34xucX6rIW4kYibmT3vCKT1y+H8fXxabepEqj4+sJDHGqJW/hmU2BT5elnEmz/J0xSRlshT47nQNJUWUADmrM9VrNbR+WsKjvqg8tnrTGcpI+Fj/ilIMTVB9G3mZIKP2rpD7xtQvvUYYgTROubTKLAhCn1t3FW46b0QbqQAYc4JfDUIf3kWU6AxsN506hazwCUmr1yyfYwca+8UZ/5F4UXcU8o/JQC1g==', 'SigningCertUrl': 'https://sns.us-east-1.amazonaws.com/SimpleNotificationService-60eadc530605d63b8e62a523676ef735.pem', 'UnsubscribeUrl': 'https://sns.us-east-1.amazonaws.com/?Action=Unsubscribe&SubscriptionArn=arn:aws:sns:us-east-1:339713150119:dream-nlp-textract-sns-response:d6be26f5-dd12-41e5-8759-db0063c31af0', 'MessageAttributes': {}}}]}
     source = aws_utilities.eventSource(event_s3)
     
     if source == s3_eventSource:

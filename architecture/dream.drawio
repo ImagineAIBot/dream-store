@@ -1,6 +1,6 @@
 <mxfile host="65bd71144e">
     <diagram name="Page-1" id="O9Js00hcS9-TdBApbFxI">
-        <mxGraphModel dx="1010" dy="609" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="850" pageHeight="1100" math="0" shadow="0">
+        <mxGraphModel dx="918" dy="572" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="850" pageHeight="1100" math="0" shadow="0">
             <root>
                 <mxCell id="0"/>
                 <mxCell id="1" parent="0"/>
@@ -186,6 +186,32 @@
                 </mxCell>
                 <mxCell id="Uk8PL86-qRoqHsbiH9Fy-114" value="comprehend&amp;nbsp;output storage key" style="whiteSpace=wrap;html=1;rounded=1;arcSize=50;align=center;verticalAlign=middle;strokeWidth=1;autosize=1;spacing=4;treeFolding=1;treeMoving=1;newEdgeStyle={&quot;edgeStyle&quot;:&quot;entityRelationEdgeStyle&quot;,&quot;startArrow&quot;:&quot;none&quot;,&quot;endArrow&quot;:&quot;none&quot;,&quot;segment&quot;:10,&quot;curved&quot;:1,&quot;sourcePerimeterSpacing&quot;:0,&quot;targetPerimeterSpacing&quot;:0};" parent="1" vertex="1">
                     <mxGeometry x="470" y="820" width="270" height="30" as="geometry"/>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+    <diagram id="55fvZ_ag4_eut0fvhMc8" name="Page-2">
+        <mxGraphModel dx="918" dy="572" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="850" pageHeight="1100" math="0" shadow="0">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+                <mxCell id="TRNeGilEGJFUSHeSEfkL-1" value="RAW PATH" style="rounded=1;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+                    <mxGeometry x="100" y="140" width="110" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="TRNeGilEGJFUSHeSEfkL-2" value="bucket/raw/user_id/&amp;lt;pdf file&amp;gt;" style="rounded=1;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+                    <mxGeometry x="220" y="140" width="420" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="TRNeGilEGJFUSHeSEfkL-3" value="PROCESSED" style="rounded=1;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+                    <mxGeometry x="100" y="210" width="110" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="TRNeGilEGJFUSHeSEfkL-4" value="bucket/processed/user_id/date/&lt;font color=&quot;#ff0000&quot;&gt;uuid&lt;/font&gt;/&amp;lt;pdf file&amp;gt;" style="rounded=1;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+                    <mxGeometry x="220" y="210" width="420" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="TRNeGilEGJFUSHeSEfkL-5" value="TEXTRACT" style="rounded=1;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+                    <mxGeometry x="100" y="280" width="110" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="TRNeGilEGJFUSHeSEfkL-6" value="bucket/textract/user_id/date/&lt;font color=&quot;#ff0000&quot;&gt;uuid&lt;/font&gt;/textract_job_id/json/&lt;font color=&quot;#ff0000&quot;&gt;uuid&lt;/font&gt;&lt;br&gt;bucket/textract/user_id/date/&lt;font color=&quot;#ff0000&quot;&gt;uuid&lt;/font&gt;/textract_job_id/text/&lt;font color=&quot;#ff0000&quot;&gt;uuid&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+                    <mxGeometry x="220" y="280" width="420" height="50" as="geometry"/>
                 </mxCell>
             </root>
         </mxGraphModel>
